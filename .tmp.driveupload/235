@@ -1,0 +1,212 @@
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: #121212; /* Dark background */
+  color: #e0e0e0; /* Light text */
+}
+
+code {
+  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
+    monospace;
+}
+
+.App {
+  text-align: center;
+  background-color: #1e1e1e; /* Slightly lighter dark for content area */
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 20px;
+  box-sizing: border-box;
+  color: #e0e0e0; /* Ensure text is light */
+}
+
+.App-header {
+  background-color: #282c34; /* Keep header slightly distinct or make it darker */
+  padding: 20px;
+  width: 100%;
+  color: #ffffff; /* White text for header */
+  margin-bottom: 20px;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3); /* Darker shadow */
+  border-radius: 8px; /* Smooth corners */
+}
+
+h1 {
+  margin: 0;
+  font-size: 2.8em; /* Slightly larger font */
+  text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5); /* Subtle text shadow */
+}
+
+main {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  max-width: 900px; /* Max width for content */
+  background-color: #282828; /* Darker background for main content */
+  padding: 30px; /* More padding */
+  border-radius: 12px; /* More rounded corners */
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.4); /* More prominent shadow */
+}
+
+.video-container {
+  margin-bottom: 30px; /* More space */
+  border: 2px solid #444; /* Subtle border */
+  border-radius: 10px; /* Rounded corners */
+  overflow: hidden;
+  width: 100%;
+  max-width: 720px; /* Slightly larger max width for video */
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+}
+
+canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  transform: scaleX(-1); /* Mirror the canvas feed */
+}
+
+
+.controls {
+  margin-bottom: 30px; /* More space */
+  width: 100%;
+}
+
+.controls h2 {
+  margin-top: 0;
+  color: #ffffff; /* White text for headings */
+  font-size: 1.8em; /* Larger font */
+  margin-bottom: 15px;
+}
+
+.controls div {
+  display: flex;
+  justify-content: center;
+  gap: 15px; /* More space between buttons */
+  flex-wrap: wrap;
+}
+
+.controls button {
+  padding: 14px 24px; /* More padding */
+  font-size: 1.1em; /* Larger font */
+  cursor: pointer;
+  border: none;
+  border-radius: 8px; /* More rounded corners */
+  background-color: #ff4136; /* Vibrant red */
+  color: white;
+  transition: background-color 0.3s ease, transform 0.1s ease, box-shadow 0.3s ease;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.controls button:hover:not(:disabled) {
+  background-color: #e03930; /* Darker red on hover */
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+}
+
+.controls button:active:not(:disabled) {
+  transform: scale(0.96); /* Slightly more shrink on click */
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.controls button:disabled {
+  background-color: #555; /* Darker grey when disabled */
+  color: #bbb;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.controls button.active {
+  background-color: #2ecc40; /* Vibrant green for active button */
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+}
+
+.results {
+  width: 100%;
+  text-align: center; /* Center the result text */
+}
+
+.results h2 {
+  margin-top: 0;
+  color: #ffffff; /* White text for headings */
+  font-size: 1.8em; /* Larger font */
+  margin-bottom: 15px;
+}
+
+.results p {
+  font-size: 1.4em; /* Larger font */
+  color: #007bff; /* Vibrant blue for result text */
+  min-height: 1.8em; /* Reserve more space */
+  font-weight: bold;
+}
+
+/* Add some basic responsiveness */
+@media (max-width: 768px) {
+  main {
+    padding: 20px;
+  }
+
+  .controls div {
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .controls button {
+    width: 90%; /* Make buttons wider on small screens */
+    max-width: 350px;
+    padding: 12px 20px;
+    font-size: 1em;
+  }
+
+  h1 {
+    font-size: 2em;
+  }
+
+  .controls h2, .results h2 {
+    font-size: 1.4em;
+  }
+
+  .results p {
+    font-size: 1.1em;
+  }
+}
+
+.App-logo {
+  height: 40vmin;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .App-logo {
+    animation: App-logo-spin infinite 20s linear;
+  }
+}
+
+.App-header {
+  background-color: #282c34;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(10px + 2vmin);
+  color: white;
+}
+
+.App-link {
+  color: #61dafb;
+}
+
+@keyframes App-logo-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
