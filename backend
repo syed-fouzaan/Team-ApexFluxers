@@ -1,0 +1,484 @@
+#!/usr/bin/env python
+import sys
+import cv2
+import mediapipe as mp
+import subprocess
+import os
+import math
+import numpy as np
+import pyautogui
+from ctypes import cast, POINTER
+from comtypes import CLSCTX_ALL
+from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+from tkinter import messagebox, Tk
+import time
+from flask import Flask, render_template
+from flask_sock import Sock
+import base64
+import io
+import json
+from datetime import datetime
+
+# Solution APIs
+mp_drawing = mp.solutions.drawing_utils
+mp_drawing_styles = mp.solutions.drawing_styles
+mp_hands = mp.solutions.hands
+
+# Volume Control Library Usage
+devices = AudioUtilities.GetSpeakers()
+interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+volume = cast(interface, POINTER(IAudioEndpointVolume))
+volRange = volume.GetVolumeRange()
+minVol, maxVol = volRange[0], volRange[1]
+
+# Webcam Setup
+wCam, hCam = 640, 480
+cam = cv2.VideoCapture(0)  # Change to use the default camera
+cam.set(3, wCam)
+cam.set(4, hCam)
+
+# Global state variables for gestures
+is_muted = False
+pinch_start_time = None  # Track pinch hold start time for play/pause
+full_screen_toggled = False  # To avoid repeated toggles rapidly
+full_screen_last_action_time = 0  # Debounce time for full screen toggling
+
+# Advanced sliding gesture detection state
+last_hand_x_positions = []
+last_hand_time_stamps = []
+slide_cooldown = 0.6  # seconds cooldown between skip commands
+last_slide_action_time = 0
+
+def show_permission_dialog(case_number):
+    root = Tk()
+    root.withdraw()  # Hide the main window
+    response = messagebox.askyesno("Camera Permission", f"Do you want to execute Case {case_number}?")
+    root.destroy()
+    return response
+
+def count_fingers(hand_landmarks):
+    fingers_down = 0
+    # Thumb
+    if hand_landmarks.landmark[4].y >= hand_landmarks.landmark[3].y:  # Thumb is down
+        fingers_down += 1
+    # Other fingers
+    for i in range(1, 5):
+        if hand_landmarks.landmark[i * 4 + 2].y >= hand_landmarks.landmark[i * 4].y:
+            fingers_down += 1
+    return fingers_down
+
+def is_victory(hand_landmarks):
+    index_finger_up = hand_landmarks.landmark[8].y < hand_landmarks.landmark[6].y
+    middle_finger_up = hand_landmarks.landmark[12].y < hand_landmarks.landmark[10].y
+    ring_finger_down = hand_landmarks.landmark[16].y >= hand_landmarks.landmark[14].y
+    pinky_finger_down = hand_landmarks.landmark[20].y >= hand_landmarks.landmark[18].y
+    return index_finger_up and middle_finger_up and ring_finger_down and pinky_finger_down
+
+def is_fist(hand_landmarks):
+    for i in range(1, 5):
+        if hand_landmarks.landmark[i * 4 + 2].y < hand_landmarks.landmark[i * 4].y:
+            return False
+    if hand_landmarks.landmark[4].y > hand_landmarks.landmark[3].y:
+        return False
+    return True
+
+def preprocess_frame_for_hands(image):
+    yuv = cv2.cvtColor(image, cv2.COLOR_BGR2YUV)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+    yuv[:,:,0] = clahe.apply(yuv[:,:,0])
+    processed = cv2.cvtColor(yuv, cv2.COLOR_YUV2BGR)
+    return processed
+
+def case_1(hands, exit_flag):
+    victory_detected = False
+    victory_start_time = None
+    countdown_started = False
+    countdown_start_time = 0
+    last_frame = None
+
+    while cam.isOpened():
+        if exit_flag[0]:
+            break
+        success, image = cam.read()
+        if not success:
+            print("Ignoring empty camera frame.")
+            continue
+
+        last_frame = image.copy()
+        image = cv2.flip(image, 1)
+        image = preprocess_frame_for_hands(image)
+        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        results = hands.process(image_rgb)
+
+        if results.multi_hand_landmarks and not countdown_started:
+            hand_landmarks = results.multi_hand_landmarks[0]
+            mp_drawing.draw_landmarks(image, hand_landmarks, mp_hands.HAND_CONNECTIONS,
+                                     mp_drawing_styles.get_default_hand_landmarks_style(),
+                                     mp_drawing_styles.get_default_hand_connections_style())
+            if not victory_detected:
+                if is_victory(hand_landmarks):
+                    if victory_start_time is None:
+                        victory_start_time = time.time()
+                    elif (time.time() - victory_start_time) >= 2:
+                        victory_detected = True
+                        countdown_started = True
+                        countdown_start_time = time.time()
+                else:
+                    victory_start_time = None
+                    cv2.putText(image, 'Show victory sign for 2 sec to start timer', (50, 100),
+                                cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
+        else:
+            if not countdown_started:
+                victory_start_time = None
+                cv2.putText(image, 'Show victory sign for 2 sec to start timer', (50, 100),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
+
+        if countdown_started:
+            elapsed = time.time() - countdown_start_time
+            countdown_sec = 5 - int(elapsed)
+            if countdown_sec > 0:
+                cv2.putText(image, f'Get Ready... Capturing in {countdown_sec}', (50, 100),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 0, 255), 3)
+            else:
+                filename = f"captured_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+                cv2.imwrite(filename, last_frame)
+                cv2.putText(image, f'Captured: {filename}', (50, 150),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 3)
+                cv2.imshow("Captured Image", image)
+                cv2.waitKey(2000)
+                break
+
+        cv2.imshow('Case 1 - Victory Photo Capture', image)
+        if cv2.waitKey(5) & 0xFF == 27 or exit_flag[0]:
+            break
+
+def case_2(hands, exit_flag):
+    global pinch_start_time, full_screen_toggled, full_screen_last_action_time
+    global last_hand_x_positions, last_hand_time_stamps, slide_cooldown, last_slide_action_time
+    global is_muted # Import the global mute state
+
+    pinch_start_time = None
+    full_screen_toggled = False
+    full_screen_last_action_time = 0
+    last_hand_x_positions.clear()
+    last_hand_time_stamps.clear()
+    last_slide_action_time = 0
+
+    with mp_hands.Hands(min_detection_confidence=0.95,
+                        min_tracking_confidence=0.9,
+                        model_complexity=1) as hands_local:
+        cv2.namedWindow('Gesture Control - Case 2 (YouTube & Volume)')
+        button_height = 50
+        button_width = 100
+        button_color = (0, 0, 255)
+        button_text_color = (255, 255, 255)
+        volume_control_active = False # State to track if volume control gesture is active
+        last_volume_time = time.time()
+        volume_change_rate = 0.02 # Adjust for volume change sensitivity
+
+        def mouse_callback(event, x, y, flags, param):
+            if event == cv2.EVENT_LBUTTONDOWN:
+                if 10 <= x <= 10 + button_width and 10 <= y <= 10 + button_height:
+                    param['exit_flag'][0] = True
+
+        cv2.setMouseCallback('Gesture Control - Case 2 (YouTube & Volume)', mouse_callback, {'exit_flag': exit_flag})
+
+        while cam.isOpened():
+            if exit_flag[0]:
+                break
+            success, image = cam.read()
+            if not success:
+                print("Ignoring empty camera frame.")
+                continue
+
+            image = cv2.flip(image, 1)
+            image = preprocess_frame_for_hands(image)
+            image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            results = hands_local.process(image_rgb)
+            image = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
+
+            current_time = time.time()
+
+            if results.multi_hand_landmarks:
+                hands_list = results.multi_hand_landmarks
+                hand_landmarks = hands_list[0] # Use first detected hand
+                index_finger_tip = hand_landmarks.landmark[8]
+                middle_finger_tip = hand_landmarks.landmark[12]
+                hand_x = index_finger_tip.x # normalized x (0 to 1)
+
+                # Append last positions for smoothing velocity
+                last_hand_x_positions.append(hand_x)
+                last_hand_time_stamps.append(current_time)
+
+                # Keep only last 15 positions to smooth out jitter
+                if len(last_hand_x_positions) > 15:
+                    last_hand_x_positions.pop(0)
+                    last_hand_time_stamps.pop(0)
+
+                # Calculate smoothed velocity over last positions
+                if len(last_hand_x_positions) >= 2:
+                    dx = last_hand_x_positions[-1] - last_hand_x_positions[0]
+                    dt = last_hand_time_stamps[-1] - last_hand_time_stamps[0]
+                    if dt > 0:
+                        velocity = dx / dt # normalized x per second
+
+                        # Define thresholds
+                        displacement_threshold = 0.10 # Adjusted for sensitivity
+                        velocity_threshold = 0.35    # Adjusted for speed sensitivity
+                        time_since_last_slide = current_time - last_slide_action_time
+
+                        # Right slide (forward skip)
+                        if dx > displacement_threshold and velocity > velocity_threshold and time_since_last_slide > slide_cooldown:
+                            pyautogui.press('right')
+                            print("Skipped Forward Video")
+                            last_slide_action_time = current_time
+                            last_hand_x_positions.clear()
+                            last_hand_time_stamps.clear()
+
+                        # Left slide (backward skip)
+                        elif dx < -displacement_threshold and velocity < -velocity_threshold and time_since_last_slide > slide_cooldown:
+                            pyautogui.press('left')
+                            print("Skipped Backward Video")
+                            last_slide_action_time = current_time
+                            last_hand_x_positions.clear()
+                            last_hand_time_stamps.clear()
+
+                # Play/Pause pinch detection using pinch fingers closeness
+                pinch_threshold = 0.04
+                thumb_tip = hand_landmarks.landmark[4]
+                distance = math.dist([thumb_tip.x, thumb_tip.y], [index_finger_tip.x, index_finger_tip.y])
+                if distance < pinch_threshold:
+                    if pinch_start_time is None:
+                        pinch_start_time = current_time
+                    elif (current_time - pinch_start_time) >= 0.3:
+                        pyautogui.press('space')
+                        print("Play/Pause toggled")
+                        pinch_start_time = None
+                else:
+                    pinch_start_time = None
+
+                # Fullscreen toggle based on wrist distance
+                left_wrist = None
+                right_wrist = None
+                if hasattr(results, 'multi_handedness') and results.multi_handedness:
+                    for idx, handedness in enumerate(results.multi_handedness):
+                        label = handedness.classification[0].label
+                        hand = hands_list[idx]
+                        if label == "Left":
+                            left_wrist = hand.landmark[0]
+                        elif label == "Right":
+                            right_wrist = hand.landmark[0]
+
+                if left_wrist and right_wrist:
+                    dist = math.sqrt(
+                        (left_wrist.x - right_wrist.x) ** 2 +
+                        (left_wrist.y - right_wrist.y) ** 2 +
+                        (left_wrist.z - right_wrist.z) ** 2
+                    )
+                    close_threshold = 0.08
+                    apart_threshold = 0.4
+                    debounce_interval = 1.5
+
+                    if dist < close_threshold and full_screen_toggled and (current_time - full_screen_last_action_time > debounce_interval):
+                        pyautogui.press('f')
+                        print("Exited full screen")
+                        full_screen_toggled = False
+                        full_screen_last_action_time = current_time
+                    elif dist > apart_threshold and not full_screen_toggled and (current_time - full_screen_last_action_time > debounce_interval):
+                        pyautogui.press('f')
+                        print("Entered full screen")
+                        full_screen_toggled = True
+                        full_screen_last_action_time = current_time
+
+                # Volume Control Gestures
+                fingers_up = [
+                    hand_landmarks.landmark[8].y < hand_landmarks.landmark[6].y,   # Index finger up
+                    hand_landmarks.landmark[12].y < hand_landmarks.landmark[10].y,  # Middle finger up
+                    hand_landmarks.landmark[16].y < hand_landmarks.landmark[14].y,  # Ring finger up
+                    hand_landmarks.landmark[20].y < hand_landmarks.landmark[18].y   # Pinky finger up
+                ]
+                thumb_up = hand_landmarks.landmark[4].x > hand_landmarks.landmark[2].x # Assuming right hand
+
+                is_fist_gesture = all(not up for up in fingers_up) and not thumb_up # Basic fist detection
+
+                index_middle_up = fingers_up[0] and fingers_up[1] and not any(fingers_up[2:]) and not is_fist_gesture
+                index_middle_down_fist = not fingers_up[0] and not fingers_up[1] and all(not up for up in fingers_up[2:]) and not thumb_up and not index_middle_up
+
+                if is_fist_gesture:
+                    if not is_muted:
+                        volume.SetMute(1, None)
+                        is_muted = True
+                        print("Volume Muted (Fist)")
+                else:
+                    if is_muted:
+                        volume.SetMute(0, None)
+                        is_muted = False
+                        print("Volume Unmuted")
+                    if index_middle_up and (current_time - last_volume_time > 0.1):
+                        current_volume = volume.GetMasterVolumeLevelScalar()
+                        new_volume = min(1.0, current_volume + volume_change_rate)
+                        volume.SetMasterVolumeLevelScalar(new_volume, None)
+                        print(f"Volume Increased: {new_volume:.2f}")
+                        last_volume_time = current_time
+                    elif index_middle_down_fist and (current_time - last_volume_time > 0.1):
+                        current_volume = volume.GetMasterVolumeLevelScalar()
+                        new_volume = max(0.0, current_volume - volume_change_rate)
+                        volume.SetMasterVolumeLevelScalar(new_volume, None)
+                        print(f"Volume Decreased: {new_volume:.2f}")
+                        last_volume_time = current_time
+
+                for hand_landmarks in hands_list:
+                    mp_drawing.draw_landmarks(image, hand_landmarks, mp_hands.HAND_CONNECTIONS,
+                                             mp_drawing_styles.get_default_hand_landmarks_style(),
+                                             mp_drawing_styles.get_default_hand_connections_style())
+
+            cv2.rectangle(image, (10, 10), (110, 60), button_color, -1)
+            cv2.putText(image, 'Exit', (30, 45), cv2.FONT_HERSHEY_SIMPLEX, 1, button_text_color, 2)
+
+            cv2.imshow('Gesture Control - Case 2 (YouTube & Volume)', image)
+            key = cv2.waitKey(5) & 0xFF
+            if key == 27 or exit_flag[0]:
+                break
+
+        cv2.destroyWindow('Gesture Control - Case 2 (YouTube & Volume)')
+
+def case_3(hands):
+    last_x = None
+    swipe_threshold = 0.15  # Threshold for swipe detection
+    last_swipe_time = 0  # To track the last time a swipe was detected
+    swipe_timeout = 0.5  # Minimum time between swipes (in seconds)
+
+    while cam.isOpened():
+        success, image = cam.read()
+        if not success:
+            print("Ignoring empty camera frame.")
+            continue
+
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        results = hands.process(image)
+        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+
+        if results.multi_hand_landmarks and len(results.multi_hand_landmarks) == 1:
+            hand_landmarks = results.multi_hand_landmarks[0]
+            mp_drawing.draw_landmarks(
+                image,
+                hand_landmarks,
+                mp_hands.HAND_CONNECTIONS,
+                mp_drawing_styles.get_default_hand_landmarks_style(),
+                mp_drawing_styles.get_default_hand_connections_style()
+            )
+
+            index_x = hand_landmarks.landmark[8].x  # Get the x position of the index finger
+
+            # Check for swipe gestures
+            current_time = time.time()
+            if last_x is not None:
+                if current_time - last_swipe_time > swipe_timeout:  # Check if enough time has passed
+                    if index_x - last_x > swipe_threshold:  # Swipe right
+                        pyautogui.press('right')  # Move to next slide
+                        last_swipe_time = current_time  # Update last swipe time
+                        print("Moved to next slide")
+                    elif index_x - last_x < -swipe_threshold:  # Swipe left
+                        pyautogui.press('left')  # Move to previous slide
+                        last_swipe_time = current_time  # Update last swipe time
+                        print("Moved to previous slide")
+
+            last_x = index_x  # Update last index position
+
+            # Check for fist gesture
+            if is_fist(hand_landmarks):
+                pyautogui.press('esc')  # Simulate pressing the ESC key
+                print("ESC pressed")
+
+        cv2.imshow('PowerPoint Control - Case 3', image)
+        if cv2.waitKey(5) & 0xFF == 27:
+            break
+
+def original_main_loop_logic():
+    global exit_flag
+    with mp_hands.Hands(min_detection_confidence=0.8,
+                        min_tracking_confidence=0.7,
+                        model_complexity=1) as hands_instance:
+        cv2.namedWindow('Hand Gesture Recognition')
+        button_height = 50
+        button_width = 100
+        button_color = (0, 0, 255)
+        button_text_color = (255, 255, 255)
+
+        def mouse_callback(event, x, y, flags, param):
+            if event == cv2.EVENT_LBUTTONDOWN:
+                if 10 <= x <= 10 + button_width and 10 <= y <= 10 + button_height:
+                    param['exit_flag'][0] = True
+
+        cv2.setMouseCallback('Hand Gesture Recognition', mouse_callback, {'exit_flag': exit_flag})
+
+        while cam.isOpened():
+            if exit_flag[0]:
+                break
+            success, image = cam.read()
+            if not success:
+                print("Ignoring empty camera frame.")
+                continue
+
+            image = cv2.flip(image, 1)
+
+            cv2.rectangle(image, (10, 10), (10 + button_width, 10 + button_height), button_color, -1)
+            cv2.putText(image, 'Exit', (30, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, button_text_color, 2)
+
+            image = preprocess_frame_for_hands(image)
+            image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            results = hands_instance.process(image_rgb)
+            image = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
+
+            if results.multi_hand_landmarks:
+                num_hands = len(results.multi_hand_landmarks)
+                if num_hands > 2:
+                    messagebox.showinfo("Hand Limit", f"{num_hands} hands are locked. No more hands recognized for this case.")
+                    continue
+
+                for hand_landmarks in results.multi_hand_landmarks:
+                    mp_drawing.draw_landmarks(
+                        image,
+                        hand_landmarks,
+                        mp_hands.HAND_CONNECTIONS,
+                        mp_drawing_styles.get_default_hand_landmarks_style(),
+                        mp_drawing_styles.get_default_hand_connections_style()
+                    )
+                    finger_count = count_fingers(hand_landmarks)
+                    cv2.putText(image, f'Fingers: {finger_count}', (10, 70),
+                                cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 255, 0), 2)
+
+                    if exit_flag[0]:
+                        break
+
+                    if finger_count == 1 and show_permission_dialog(1):
+                        case_1(hands_instance, exit_flag)
+                    elif finger_count == 2 and show_permission_dialog(2):
+                        case_2(hands_instance, exit_flag)
+                        if exit_flag[0]:
+                            break
+                    elif finger_count == 3 and show_permission_dialog(3):
+                        case_3(hands_instance)
+                    if exit_flag[0]:
+                        break
+
+            cv2.imshow('Hand Gesture Recognition', image)
+            key = cv2.waitKey(5) & 0xFF
+            if key == 27 or exit_flag[0]:
+                break
+
+        cam.release()
+        cv2.destroyAllWindows()
+        sys.exit()
+
+if __name__ == "__main__":
+    if not cam.isOpened():
+        print("Cannot open camera")
+        sys.exit()
+
+    exit_flag = [False]
+
+    with mp_hands.Hands(min_detection_confidence=0.8,
+                        min_tracking_confidence=0.7,
+                        model_complexity=1) as hands_instance:
+        original_main_loop_logic()
