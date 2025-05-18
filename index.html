@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html ng-app="gestureApp"> <!-- Add ng-app directive -->
+<head>
+    <title>Web Gesture Control</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <!-- Include AngularJS library -->
+    <script src="https://ajax.googleapis.com/ajax/libs/angularjs/1.8.2/angular.min.js"></script>
+</head>
+<body ng-controller="GestureController"> <!-- Add ng-controller directive -->
+    <h1>Web Hand Gesture Recognition</h1>
+
+    <div class="controls">
+        <button ng-click="selectCase(1)" ng-class="{ 'active': selectedCase === 1 }">Case 1: Photo Capture</button>
+        <button ng-click="selectCase(2)" ng-class="{ 'active': selectedCase === 2 }">Case 2: YouTube Control</button>
+        <button ng-click="selectCase(3)" ng-class="{ 'active': selectedCase === 3 }">Case 3: PowerPoint Control</button>
+    </div>
+
+    <!-- The video element will be replaced by a canvas by the script -->
+    <video id="webcamFeed" width="640" height="480" autoplay playsinline></video>
+    <!-- Use AngularJS data binding for the gesture result -->
+    <div id="gestureResult">{{ gestureResult }}</div>
+    <div id="selectedCaseDisplay">Active Case: {{ selectedCase }}</div>
+
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
